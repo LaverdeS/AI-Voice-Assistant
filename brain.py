@@ -1,4 +1,7 @@
+import sys
 import asyncio
+import time
+
 import sounddevice
 
 from amazon_transcribe.client import TranscribeStreamingClient
@@ -12,15 +15,20 @@ process the returned transcription results as needed. This
 handler will simply print the text out to your interpreter.
 """
 
+LAST_HEARD = ""
+
 
 class MyEventHandler(TranscriptResultStreamHandler):
     async def handle_transcript_event(self, transcript_event: TranscriptEvent):
         # This handler can be implemented to handle transcriptions as needed.
         # Here's an example to get started.
         results = transcript_event.transcript.results
+
+        global LAST_HEARD
         for result in results:
             for alt in result.alternatives:
-                print(alt.transcript)
+                print(f"\r{alt.transcript}", end="", flush=True)
+                LAST_HEARD = alt.transcript
 
 
 async def mic_stream():
@@ -77,9 +85,9 @@ async def basic_transcribe():
 def run_conscious_state():
     loop = asyncio.get_event_loop()
     loop.run_until_complete(basic_transcribe())
+    print()
     loop.close()
 
 
 if __name__ == "__main__":
     run_conscious_state()
-
