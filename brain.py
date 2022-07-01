@@ -1,7 +1,8 @@
-import sys
 import asyncio
-import time
+import sys
 
+import requests
+import json
 import sounddevice
 
 from amazon_transcribe.client import TranscribeStreamingClient
@@ -82,6 +83,21 @@ async def basic_transcribe():
     await asyncio.gather(write_chunks(stream), handler.handle_events())
 
 
+def query(payload, API_URL, headers):
+    response = requests.post(API_URL, headers=headers, json=payload)
+    return response.json()
+
+
+def text_assisting(context):
+    model = "gpt2"
+    API_URL = f"https://api-inference.huggingface.co/models/{model}"
+    with open("webis_token.json", "r") as f:
+        authorization_token = json.load(f)
+
+    headers = {"Authorization": f"Bearer api_org_{authorization_token['authorization']}"}
+    return query({"inputs": f"{context}"}, API_URL, headers,)
+
+
 def run_conscious_state():
     loop = asyncio.get_event_loop()
     loop.run_until_complete(basic_transcribe())
@@ -90,4 +106,7 @@ def run_conscious_state():
 
 
 if __name__ == "__main__":
+    model_output = text_assisting("that is so ")
+    generated_text = model_output[0]['generated_text'].replace("\n", "")
+    print(generated_text)
     run_conscious_state()
