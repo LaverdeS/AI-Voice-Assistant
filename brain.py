@@ -76,6 +76,14 @@ LAST_HEARD = ""
 
 # LAST_SAID = ""
 
+async def print_transcript(result):
+    print(f"\r{result}", end="", flush=True)
+
+
+async def new_line():
+    await asyncio.sleep(15)
+    print()
+
 
 class MyEventHandler(TranscriptResultStreamHandler):
     async def handle_transcript_event(self, transcript_event: TranscriptEvent):
@@ -85,16 +93,11 @@ class MyEventHandler(TranscriptResultStreamHandler):
 
         global LAST_HEARD
         for result in results:
+            # task = asyncio.create_task(new_line())
             for alt in result.alternatives:
-                print(f"\r{alt.transcript}", end="", flush=True)
                 LAST_HEARD = alt.transcript
-
-        if LAST_HEARD:
-            model_output = text_assisting(LAST_HEARD)
-            generated_text = model_output[0]['generated_text'].replace("\n", "")[len(LAST_HEARD):]
-            print(" " + generated_text + "\n\n")
-            read_outloud(LAST_HEARD + generated_text)
-            LAST_HEARD = ""
+                task_1 = asyncio.create_task(print_transcript(LAST_HEARD))
+                await task_1
 
 
 async def mic_stream():
@@ -145,6 +148,7 @@ async def basic_transcribe():
 
     # Instantiate our handler and start processing events
     handler = MyEventHandler(stream.output_stream)
+
     await asyncio.gather(write_chunks(stream), handler.handle_events())
 
 
@@ -166,8 +170,18 @@ def text_assisting(context):
 def run_conscious_state():
     loop = asyncio.get_event_loop()
     loop.run_until_complete(basic_transcribe())
+
+    # basic_transcribe is my main transciption co-routine where I await write_chunks & handle_events())
+
     loop.close()
 
 
 if __name__ == "__main__":
     run_conscious_state()
+
+    # if LAST_HEARD:
+    #     model_output = text_assisting(LAST_HEARD)
+    #     generated_text = model_output[0]['generated_text'].replace("\n", "")[len(LAST_HEARD):]
+    #     print(" " + generated_text + "\n\n")
+    #     read_outloud(LAST_HEARD + generated_text)
+    #     LAST_HEARD = ""
