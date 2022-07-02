@@ -24,7 +24,7 @@ session = Session(profile_name="default")
 polly = session.client("polly")
 
 
-def read_outloud(text: str):
+async def read_outloud(text: str):
     try:
         # Request speech synthesis
         response = polly.synthesize_speech(Text=text, OutputFormat="mp3", VoiceId="Joanna")
@@ -72,17 +72,39 @@ handler will simply print the text out to your interpreter.
 """
 
 LAST_HEARD = ""
+LAST_SAID = ""
+NUMBER_OF_LINES = 100
+CHUNK_TIME_SIZE = 8
+CONVERSATION_ON = False
 
 
-# LAST_SAID = ""
 
 async def print_transcript(result):
-    print(f"\r{result}", end="", flush=True)
+    if result[-1] == ".":
+        print(f"\rCONV: {CONVERSATION_ON}, LAST: {LAST_HEARD}:: {result}", end="", flush=True)
 
 
 async def new_line():
-    await asyncio.sleep(15)
-    print()
+    for _ in range(NUMBER_OF_LINES):
+        await asyncio.sleep(CHUNK_TIME_SIZE)
+        global CONVERSATION_ON
+        CONVERSATION_ON = True
+        print()
+
+
+async def reply_async():
+    for _ in range(NUMBER_OF_LINES):
+        await asyncio.sleep(CHUNK_TIME_SIZE)
+        global CONVERSATION_ON, LAST_SAID
+        print("LAST_HEARD: ", LAST_HEARD)
+        CONVERSATION_ON = True
+        if LAST_HEARD:
+            say_this = asyncio.create_task(text_assisting(LAST_HEARD))
+            await say_this
+            print("say_this (LAST SAID): ", LAST_SAID)
+            await read_outloud(LAST_SAID[0]['generated_text'])
+            CONVERSATION_ON = False
+            LAST_SAID = ""
 
 
 class MyEventHandler(TranscriptResultStreamHandler):
@@ -91,10 +113,10 @@ class MyEventHandler(TranscriptResultStreamHandler):
         # Here's an example to get started.
         results = transcript_event.transcript.results
 
-        global LAST_HEARD
         for result in results:
             # task = asyncio.create_task(new_line())
             for alt in result.alternatives:
+                global LAST_HEARD
                 LAST_HEARD = alt.transcript
                 task_1 = asyncio.create_task(print_transcript(LAST_HEARD))
                 await task_1
@@ -130,9 +152,11 @@ async def mic_stream():
 async def write_chunks(stream):
     # This connects the raw audio chunks generator coming from the microphone
     # and passes them along to the transcription stream.
-    async for chunk, status in mic_stream():
-        await stream.input_stream.send_audio_event(audio_chunk=chunk)
-    await stream.input_stream.end_stream()
+    global CONVERSATION_ON
+    if not CONVERSATION_ON:
+        async for chunk, status in mic_stream():
+            await stream.input_stream.send_audio_event(audio_chunk=chunk)
+        await stream.input_stream.end_stream()
 
 
 async def basic_transcribe():
@@ -148,23 +172,19 @@ async def basic_transcribe():
 
     # Instantiate our handler and start processing events
     handler = MyEventHandler(stream.output_stream)
-
-    await asyncio.gather(write_chunks(stream), handler.handle_events())
-
-
-def query(payload, API_URL, headers):
-    response = requests.post(API_URL, headers=headers, json=payload)
-    return response.json()
+    # await asyncio.gather(new_line(), reply_async())
+    await asyncio.gather(write_chunks(stream), handler.handle_events(), new_line(), reply_async())
 
 
-def text_assisting(context):
+async def text_assisting(context):
     model = "gpt2"
     API_URL = f"https://api-inference.huggingface.co/models/{model}"
     with open("webis_token.json", "r") as f:
         authorization_token = json.load(f)
 
     headers = {"Authorization": f"Bearer api_org_{authorization_token['authorization']}"}
-    return query({"inputs": f"{context}"}, API_URL, headers, )
+    global LAST_SAID
+    LAST_SAID = requests.post(API_URL, headers=headers, json={"inputs": f"{context}"}).json()
 
 
 def run_conscious_state():
