@@ -6,12 +6,13 @@ import requests
 import json
 import sounddevice
 import pygame
+import random
 
 from amazon_transcribe.client import TranscribeStreamingClient
 from amazon_transcribe.handlers import TranscriptResultStreamHandler
 from amazon_transcribe.model import TranscriptEvent
 from boto3 import Session
-from botocore.exceptions import BotoCoreError, ClientError
+from botocore.exceptions import BotoCoreError, ClientError, ValidationError
 from contextlib import closing
 from tempfile import gettempdir
 
@@ -23,12 +24,17 @@ import subprocess
 # section of the AWS credentials file (~/.aws/credentials).
 session = Session(profile_name="default")
 polly = session.client("polly")
+VOICES = ["Nicole", "Russell", "Amy", "Emma", "Brian", "Aditi", "Raveena", "Ivy",
+          "Joanna", "Kendra", "Kimberly", "Salli", "Joey", "Justin", "Matthew", "Geraint"]
 
 
 async def read_outloud(text: str):
     try:
         # Request speech synthesis
-        response = polly.synthesize_speech(Text=text, OutputFormat="mp3", VoiceId="Joanna")
+        voiceid = random.choice(VOICES)
+        print("persona: ", voiceid)
+        # BRIAN
+        response = polly.synthesize_speech(Text=text, OutputFormat="mp3", VoiceId=voiceid)
     except (BotoCoreError, ClientError) as error:
         # The service returned an error, exit gracefully
         print(error)
@@ -50,7 +56,8 @@ async def read_outloud(text: str):
             except IOError as error:
                 # Could not write to file, exit gracefully
                 print(error)
-                sys.exit(-1)
+                # sys.exit(-1)
+                # pass
 
     else:
         # The response didn't contain audio data, exit gracefully
@@ -59,15 +66,18 @@ async def read_outloud(text: str):
 
     # Play the audio using the platform's default player
     if sys.platform == "win32":
-        os.startfile(output)  # start with default player
-        # pygame.init()
-        # pygame.mixer.init()
-        # pygame.mixer.music.load(output)
-        # pygame.mixer.music.play()
-        # # while pygame.mixer.music.get_busy():  # check if the file is playing
-        # #     pass
+        # os.startfile(output)  # start with default player
+        pygame.init()
+        pygame.mixer.init()
+        pygame.mixer.music.load(output)
+        pygame.mixer.music.play()
+        while pygame.mixer.music.get_busy():  # check if the file is playing
+            # print("talking...")
+            pass
         # pygame.event.wait()
-        #os.remove(output)
+        # TODO:: add one sound file to delete the other and so on or just remove the file after something is said
+        pygame.mixer.quit()
+        os.remove(output)
     else:
         # The following works on macOS and Linux. (Darwin = mac, xdg-open = linux).
         opener = "open" if sys.platform == "darwin" else "xdg-open"
@@ -87,10 +97,9 @@ CHUNK_TIME_SIZE = 8
 CONVERSATION_ON = False
 
 
-
 async def print_transcript(result):
     if result[-1] == ".":
-        print(f"\rCONV: {CONVERSATION_ON}, LAST: {LAST_HEARD}:: {result}", end="", flush=True)
+        print(f"\r[CONV: {CONVERSATION_ON}][hearing]:: {result}", end="", flush=True)
 
 
 async def new_line():
@@ -103,19 +112,28 @@ async def new_line():
 
 async def reply_async():
     for _ in range(NUMBER_OF_LINES):
-        await asyncio.sleep(CHUNK_TIME_SIZE)
         global CONVERSATION_ON, LAST_SAID
-        print("LAST_HEARD: ", LAST_HEARD)
+        await asyncio.sleep(CHUNK_TIME_SIZE)
         CONVERSATION_ON = True
+        print(f"[CONV: {CONVERSATION_ON}][processing]:: LAST_HEARD: {LAST_HEARD}")
+
         if LAST_HEARD:
-            say_this = asyncio.create_task(text_assisting(LAST_HEARD))
-            await say_this
-            print("say_this (LAST SAID): ", LAST_SAID)
-            await read_outloud(LAST_SAID[0]['generated_text'])
-            # await asyncio.sleep(3)
-            CONVERSATION_ON = False
-            LAST_SAID = ""
-            # LAST_HEARD == LAST_SAID
+            try:
+                speak = asyncio.create_task(text_assisting(LAST_HEARD))  # this writes in LAST_SAID
+                await speak
+                print(f"[CONV: {CONVERSATION_ON}][speaking]:: {LAST_SAID}")
+                LAST_SAID = LAST_SAID[0]['generated_text']
+            except KeyError:
+                speak = asyncio.create_task(text_assisting(LAST_HEARD, model="gpt2"))  # this writes in LAST_SAID
+                await speak
+                print(f"[CONV: {CONVERSATION_ON}][speaking]:: {LAST_SAID}")
+                LAST_SAID = LAST_SAID[0]['generated_text']
+            finally:
+                await read_outloud(LAST_SAID)
+                # await asyncio.sleep(3)
+                CONVERSATION_ON = False
+                LAST_SAID = ""
+                # LAST_HEARD == LAST_SAID
 
 
 class MyEventHandler(TranscriptResultStreamHandler):
@@ -188,7 +206,6 @@ async def basic_transcribe():
 
 
 async def text_assisting(context, model="bloom"):
-
     if model == "gpt2":
         API_URL = f"https://api-inference.huggingface.co/models/{model}"
     elif model == "bloom":
