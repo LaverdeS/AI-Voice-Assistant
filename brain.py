@@ -5,6 +5,7 @@ import time
 import requests
 import json
 import sounddevice
+import pygame
 
 from amazon_transcribe.client import TranscribeStreamingClient
 from amazon_transcribe.handlers import TranscriptResultStreamHandler
@@ -58,7 +59,15 @@ async def read_outloud(text: str):
 
     # Play the audio using the platform's default player
     if sys.platform == "win32":
-        os.startfile(output)
+        os.startfile(output)  # start with default player
+        # pygame.init()
+        # pygame.mixer.init()
+        # pygame.mixer.music.load(output)
+        # pygame.mixer.music.play()
+        # # while pygame.mixer.music.get_busy():  # check if the file is playing
+        # #     pass
+        # pygame.event.wait()
+        #os.remove(output)
     else:
         # The following works on macOS and Linux. (Darwin = mac, xdg-open = linux).
         opener = "open" if sys.platform == "darwin" else "xdg-open"
@@ -103,8 +112,10 @@ async def reply_async():
             await say_this
             print("say_this (LAST SAID): ", LAST_SAID)
             await read_outloud(LAST_SAID[0]['generated_text'])
+            # await asyncio.sleep(3)
             CONVERSATION_ON = False
             LAST_SAID = ""
+            # LAST_HEARD == LAST_SAID
 
 
 class MyEventHandler(TranscriptResultStreamHandler):
@@ -176,9 +187,13 @@ async def basic_transcribe():
     await asyncio.gather(write_chunks(stream), handler.handle_events(), new_line(), reply_async())
 
 
-async def text_assisting(context):
-    model = "gpt2"
-    API_URL = f"https://api-inference.huggingface.co/models/{model}"
+async def text_assisting(context, model="bloom"):
+
+    if model == "gpt2":
+        API_URL = f"https://api-inference.huggingface.co/models/{model}"
+    elif model == "bloom":
+        API_URL = f"https://api-inference.huggingface.co/models/bigscience/{model}"
+
     with open("webis_token.json", "r") as f:
         authorization_token = json.load(f)
 
@@ -198,10 +213,3 @@ def run_conscious_state():
 
 if __name__ == "__main__":
     run_conscious_state()
-
-    # if LAST_HEARD:
-    #     model_output = text_assisting(LAST_HEARD)
-    #     generated_text = model_output[0]['generated_text'].replace("\n", "")[len(LAST_HEARD):]
-    #     print(" " + generated_text + "\n\n")
-    #     read_outloud(LAST_HEARD + generated_text)
-    #     LAST_HEARD = ""
