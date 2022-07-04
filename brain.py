@@ -45,6 +45,10 @@ HEARING_STREAM = None
 CLIENT_STREAM = None
 SPEAKING = False
 
+MODE = 2
+# 1: agents do not hear each other; if user does not say no more then LAST_HEARD is never overwriten
+# 2: agents hear each other last words and the user, and continue from it the context
+
 
 async def read_outloud(text: str):
     global HEARING_STREAM, AGENT
@@ -163,40 +167,46 @@ async def new_agent(li):
 
 
 async def reply_async_single():
-    global SPEAKING, LAST_SAID, AGENT
+    global SPEAKING, LAST_SAID, AGENT, MODE, LAST_HEARD
     await asyncio.sleep(CHUNK_TIME_SIZE)
     SPEAKING = True
+
     print(f"[processing]... {LAST_HEARD}")
 
     if LAST_HEARD:
+        await new_agent(VOICES)
+        start_color = AGENT1_COLOR if AGENTS_COLOR[AGENT] == 0 else AGENT2_COLOR
         try:
-            await new_agent(VOICES)
-            # print("agent: ", AGENT)
             print("[bloom]...")
-            start_color = AGENT1_COLOR if AGENTS_COLOR[AGENT] == 0 else AGENT2_COLOR
+            # print("LAST_HEARD: ", LAST_HEARD)
             speak = asyncio.create_task(text_assisting(LAST_HEARD, model="bloom"))  # this writes in LAST_SAID
             await speak
-            # print("spoken...")
-            if 'error' not in LAST_SAID[0].keys():
-                LAST_SAID = LAST_SAID[0]['generated_text']
-                print(f"[speaking]... {start_color + LAST_SAID + END_COLOR}")
-            # else:
-            #     print("error...")
+            # print("to say bloom: ", LAST_SAID)
+            print(f"[speaking]... {start_color + LAST_SAID + END_COLOR}")
 
         except KeyError:
             print("[gpt2]...")
             speak = asyncio.create_task(text_assisting(LAST_HEARD, model="gpt2"))  # this writes in LAST_SAID
             await speak
+
             if 'error' not in LAST_SAID[0].keys():
                 LAST_SAID = LAST_SAID[0]['generated_text']
                 print(f"[speaking]... {start_color + LAST_SAID + END_COLOR}")
 
         finally:
+            # print("to say: ", LAST_SAID)
             await read_outloud(LAST_SAID)
             # await asyncio.sleep(3)
             SPEAKING = False
-            LAST_SAID = ""
-            # LAST_HEARD == LAST_SAID   # TODO: use this as mode 3 where it just continues the story alone
+            if MODE == 2:
+                punkt = LAST_SAID.rfind(".")
+                if punkt == -1:
+                    # print("punkt-1")
+                    punkt = len(LAST_SAID)//2
+                # print(f"_p{punkt}|l{len(LAST_SAID)}")
+                if punkt + 1 != len(LAST_SAID):
+                    LAST_HEARD = LAST_SAID[punkt + 1:]
+                    # print("new LAST_HEARD: ", LAST_HEARD)
 
 
 class MyEventHandler(TranscriptResultStreamHandler):
@@ -326,6 +336,9 @@ async def text_assisting(context, model="bloom"):
     headers = {"Authorization": f"Bearer api_org_{authorization_token['authorization']}"}
     global LAST_SAID
     LAST_SAID = requests.post(API_URL, headers=headers, json={"inputs": f"{context}"}).json()
+
+    if model == "bloom":
+        LAST_SAID = LAST_SAID[0][0]['generated_text']
 
 
 def run_conscious_state():
