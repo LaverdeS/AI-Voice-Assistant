@@ -33,6 +33,7 @@ LAST_SAID = ""
 NUMBER_OF_LINES = 100
 CHUNK_TIME_SIZE = 8
 HEARING_STREAM = None
+CLIENT_STREAM = None
 SPEAKING = False
 
 
@@ -143,6 +144,32 @@ async def reply_async():
                 # LAST_HEARD == LAST_SAID
 
 
+async def reply_async_single():
+    global SPEAKING, LAST_SAID
+    await asyncio.sleep(CHUNK_TIME_SIZE)
+    SPEAKING = True
+    print(f"[CONV: {SPEAKING}][processing]:: LAST_HEARD: {LAST_HEARD}")
+
+    if LAST_HEARD:
+        try:
+            speak = asyncio.create_task(text_assisting(LAST_HEARD))  # this writes in LAST_SAID
+            await speak
+            print(f"[CONV: {SPEAKING}][speaking]:: {LAST_SAID}")
+            LAST_SAID = LAST_SAID[0]['generated_text']
+        except KeyError:
+            speak = asyncio.create_task(text_assisting(LAST_HEARD, model="gpt2"))  # this writes in LAST_SAID
+            await speak
+            print(f"[CONV: {SPEAKING}][speaking]:: {LAST_SAID}")
+            LAST_SAID = LAST_SAID[0]['generated_text']
+        finally:
+            await read_outloud(LAST_SAID)
+            # await asyncio.sleep(3)
+            print("--end of speech--")
+            SPEAKING = False
+            LAST_SAID = ""
+            # LAST_HEARD == LAST_SAID
+
+
 class MyEventHandler(TranscriptResultStreamHandler):
     async def handle_transcript_event(self, transcript_event: TranscriptEvent):
         # This handler can be implemented to handle transcriptions as needed.
@@ -216,18 +243,44 @@ async def basic_transcribe():
         media_sample_rate_hz=16000,
         media_encoding="pcm",
     )
-    global TRANSCRIBE_STREAM
-    TRANSCRIBE_STREAM = stream
     # Instantiate our handler and start processing events
-    handler = MyEventHandler(stream.output_stream)
+
     # await asyncio.gather(new_line(), reply_async())
     N = 5
     while N > 0:
         try:
+            handler = MyEventHandler(stream.output_stream)
             await asyncio.gather(write_chunks(stream), handler.handle_events(), new_line(), reply_async())
         except BadRequestException:
             await asyncio.sleep(0.1)
+            print(f"all_tasks: {asyncio.all_tasks}")
 
+
+async def start_client():
+    global CLIENT_STREAM
+    client = TranscribeStreamingClient(region="us-west-2")
+    # Start transcription to generate our async stream
+    CLIENT_STREAM = await client.start_stream_transcription(language_code="en-US", media_sample_rate_hz=16000, media_encoding="pcm")
+
+
+async def cancel_all_tasks(tasks_list=[]):
+    for task in tasks_list:
+        task.cancel()
+
+
+async def basic_transcribe2():
+    N = 100
+    while N > 0:
+        task0 = asyncio.create_task(start_client())  # writes CLIENT STREAM
+        await task0
+        handler = MyEventHandler(CLIENT_STREAM.output_stream)
+        task1 = asyncio.create_task(handler.handle_events())  # writes on LAST_HEARD
+        task2 = asyncio.create_task(write_chunks(CLIENT_STREAM))  # prints LAST_HEARD
+        task3 = asyncio.create_task(new_line())
+        task4 = asyncio.create_task(reply_async_single())
+        await task4
+        await cancel_all_tasks([task0, task1, task2, task3, task4])
+        print("**end-of-round**")
 
 
 async def text_assisting(context, model="bloom"):
@@ -246,8 +299,8 @@ async def text_assisting(context, model="bloom"):
 
 def run_conscious_state():
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(basic_transcribe())
-
+    # loop.run_until_complete(basic_transcribe())
+    loop.run_until_complete(basic_transcribe2())
     # basic_transcribe is my main transciption co-routine where I await write_chunks & handle_events())
 
     loop.close()
