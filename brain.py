@@ -39,13 +39,13 @@ SPEAKING = False
 
 async def read_outloud(text: str):
     global HEARING_STREAM
-    print("closing stream")
+    # print("closing stream")
     HEARING_STREAM.close()
 
     try:
         # Request speech synthesis
         voiceid = random.choice(VOICES)
-        print("persona: ", voiceid)
+        print("------------- said by: ", voiceid, end="")
         # BRIAN
         response = polly.synthesize_speech(Text=text, OutputFormat="mp3", VoiceId=voiceid)
     except (BotoCoreError, ClientError) as error:
@@ -106,10 +106,10 @@ handler will simply print the text out to your interpreter.
 
 async def print_transcript(result):
     if result[-1] == ".":
-        print(f"\r[CONV: {SPEAKING}][hearing]:: {result}", end="", flush=True)
+        print(f"\r[hearing]... {result}", end="", flush=True)
 
 
-async def new_line():
+async def new_line():  # new_line and speak_flag that is checked in speak_out_loud
     for _ in range(NUMBER_OF_LINES):
         await asyncio.sleep(CHUNK_TIME_SIZE)
         global SPEAKING
@@ -122,52 +122,56 @@ async def reply_async():
         global SPEAKING, LAST_SAID
         await asyncio.sleep(CHUNK_TIME_SIZE)
         SPEAKING = True
-        print(f"[CONV: {SPEAKING}][processing]:: LAST_HEARD: {LAST_HEARD}")
+        print(f"[processing]... {LAST_HEARD}")
 
         if LAST_HEARD:
             try:
                 speak = asyncio.create_task(text_assisting(LAST_HEARD))  # this writes in LAST_SAID
                 await speak
-                print(f"[CONV: {SPEAKING}][speaking]:: {LAST_SAID}")
+                if 'error' not in LAST_SAID[0].keys():
+                    print(f"[speaking]... {LAST_SAID[0]['generated_text']}")
+
                 LAST_SAID = LAST_SAID[0]['generated_text']
-            except KeyError:
+            except KeyError:  # repeats the query in case model was not ready
                 speak = asyncio.create_task(text_assisting(LAST_HEARD, model="gpt2"))  # this writes in LAST_SAID
                 await speak
-                print(f"[CONV: {SPEAKING}][speaking]:: {LAST_SAID}")
+                if 'error' not in LAST_SAID[0].keys():
+                    print(f"[speaking]... {LAST_SAID[0]['generated_text']}")
                 LAST_SAID = LAST_SAID[0]['generated_text']
             finally:
                 await read_outloud(LAST_SAID)
-                # await asyncio.sleep(3)
                 print("--end of speech--")
                 SPEAKING = False
                 LAST_SAID = ""
-                # LAST_HEARD == LAST_SAID
 
 
 async def reply_async_single():
     global SPEAKING, LAST_SAID
     await asyncio.sleep(CHUNK_TIME_SIZE)
     SPEAKING = True
-    print(f"[CONV: {SPEAKING}][processing]:: LAST_HEARD: {LAST_HEARD}")
+    print(f"[processing]... {LAST_HEARD}")
 
     if LAST_HEARD:
         try:
             speak = asyncio.create_task(text_assisting(LAST_HEARD))  # this writes in LAST_SAID
             await speak
-            print(f"[CONV: {SPEAKING}][speaking]:: {LAST_SAID}")
-            LAST_SAID = LAST_SAID[0]['generated_text']
+            if 'error' not in LAST_SAID[0].keys():
+                LAST_SAID = LAST_SAID[0]['generated_text']
+                print(f"[speaking]... {LAST_SAID}")
+
         except KeyError:
             speak = asyncio.create_task(text_assisting(LAST_HEARD, model="gpt2"))  # this writes in LAST_SAID
             await speak
-            print(f"[CONV: {SPEAKING}][speaking]:: {LAST_SAID}")
-            LAST_SAID = LAST_SAID[0]['generated_text']
+            if 'error' not in LAST_SAID[0].keys():
+                LAST_SAID = LAST_SAID[0]['generated_text']
+                print(f"[speaking]... {LAST_SAID}")
+
         finally:
             await read_outloud(LAST_SAID)
             # await asyncio.sleep(3)
-            print("--end of speech--")
             SPEAKING = False
             LAST_SAID = ""
-            # LAST_HEARD == LAST_SAID
+            # LAST_HEARD == LAST_SAID   # TODO: use this as mode 3 where it just continues the story alone
 
 
 class MyEventHandler(TranscriptResultStreamHandler):
@@ -270,6 +274,7 @@ async def cancel_all_tasks(tasks_list=[]):
 
 async def basic_transcribe2():
     N = 100
+    print("\nWELCOME TO THE CONVERSATION ARENA!\n")
     while N > 0:
         task0 = asyncio.create_task(start_client())  # writes CLIENT STREAM
         await task0
@@ -280,7 +285,7 @@ async def basic_transcribe2():
         task4 = asyncio.create_task(reply_async_single())
         await task4
         await cancel_all_tasks([task0, task1, task2, task3, task4])
-        print("**end-of-round**")
+        print("")
 
 
 async def text_assisting(context, model="bloom"):
