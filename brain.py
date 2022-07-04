@@ -11,6 +11,7 @@ import random
 from amazon_transcribe.client import TranscribeStreamingClient
 from amazon_transcribe.handlers import TranscriptResultStreamHandler
 from amazon_transcribe.model import TranscriptEvent
+from amazon_transcribe.exceptions import BadRequestException
 from boto3 import Session
 from botocore.exceptions import BotoCoreError, ClientError, ValidationError
 from contextlib import closing
@@ -27,8 +28,19 @@ polly = session.client("polly")
 VOICES = ["Nicole", "Russell", "Amy", "Emma", "Brian", "Aditi", "Raveena", "Ivy",
           "Joanna", "Kendra", "Kimberly", "Salli", "Joey", "Justin", "Matthew", "Geraint"]
 
+LAST_HEARD = ""
+LAST_SAID = ""
+NUMBER_OF_LINES = 100
+CHUNK_TIME_SIZE = 8
+HEARING_STREAM = None
+SPEAKING = False
+
 
 async def read_outloud(text: str):
+    global HEARING_STREAM
+    print("closing stream")
+    HEARING_STREAM.close()
+
     try:
         # Request speech synthesis
         voiceid = random.choice(VOICES)
@@ -90,48 +102,43 @@ process the returned transcription results as needed. This
 handler will simply print the text out to your interpreter.
 """
 
-LAST_HEARD = ""
-LAST_SAID = ""
-NUMBER_OF_LINES = 100
-CHUNK_TIME_SIZE = 8
-CONVERSATION_ON = False
-
 
 async def print_transcript(result):
     if result[-1] == ".":
-        print(f"\r[CONV: {CONVERSATION_ON}][hearing]:: {result}", end="", flush=True)
+        print(f"\r[CONV: {SPEAKING}][hearing]:: {result}", end="", flush=True)
 
 
 async def new_line():
     for _ in range(NUMBER_OF_LINES):
         await asyncio.sleep(CHUNK_TIME_SIZE)
-        global CONVERSATION_ON
-        CONVERSATION_ON = True
+        global SPEAKING
+        SPEAKING = True
         print()
 
 
 async def reply_async():
     for _ in range(NUMBER_OF_LINES):
-        global CONVERSATION_ON, LAST_SAID
+        global SPEAKING, LAST_SAID
         await asyncio.sleep(CHUNK_TIME_SIZE)
-        CONVERSATION_ON = True
-        print(f"[CONV: {CONVERSATION_ON}][processing]:: LAST_HEARD: {LAST_HEARD}")
+        SPEAKING = True
+        print(f"[CONV: {SPEAKING}][processing]:: LAST_HEARD: {LAST_HEARD}")
 
         if LAST_HEARD:
             try:
                 speak = asyncio.create_task(text_assisting(LAST_HEARD))  # this writes in LAST_SAID
                 await speak
-                print(f"[CONV: {CONVERSATION_ON}][speaking]:: {LAST_SAID}")
+                print(f"[CONV: {SPEAKING}][speaking]:: {LAST_SAID}")
                 LAST_SAID = LAST_SAID[0]['generated_text']
             except KeyError:
                 speak = asyncio.create_task(text_assisting(LAST_HEARD, model="gpt2"))  # this writes in LAST_SAID
                 await speak
-                print(f"[CONV: {CONVERSATION_ON}][speaking]:: {LAST_SAID}")
+                print(f"[CONV: {SPEAKING}][speaking]:: {LAST_SAID}")
                 LAST_SAID = LAST_SAID[0]['generated_text']
             finally:
                 await read_outloud(LAST_SAID)
                 # await asyncio.sleep(3)
-                CONVERSATION_ON = False
+                print("--end of speech--")
+                SPEAKING = False
                 LAST_SAID = ""
                 # LAST_HEARD == LAST_SAID
 
@@ -163,6 +170,8 @@ async def mic_stream():
     # Be sure to use the correct parameters for the audio stream that matches
     # the audio formats described for the source language you'll be using:
     # https://docs.aws.amazon.com/transcribe/latest/dg/streaming.html
+    global SPEAKING, HEARING_STREAM
+
     stream = sounddevice.RawInputStream(
         channels=1,
         samplerate=16000,
@@ -170,8 +179,17 @@ async def mic_stream():
         blocksize=1024 * 2,
         dtype="int16",
     )
+
+    HEARING_STREAM = stream
+
     # Initiate the audio stream and asynchronously yield the audio chunks
     # as they become available.
+
+    # while True:
+    #     while SPEAKING:
+    #         await asyncio.sleep(0.1)
+    #         print("speaking...")
+    #     print("(hearing...)")
     with stream:
         while True:
             indata, status = await input_queue.get()
@@ -181,11 +199,11 @@ async def mic_stream():
 async def write_chunks(stream):
     # This connects the raw audio chunks generator coming from the microphone
     # and passes them along to the transcription stream.
-    global CONVERSATION_ON
-    if not CONVERSATION_ON:
-        async for chunk, status in mic_stream():
-            await stream.input_stream.send_audio_event(audio_chunk=chunk)
-        await stream.input_stream.end_stream()
+    # global SPEAKING
+    # if not SPEAKING:
+    async for chunk, status in mic_stream():
+        await stream.input_stream.send_audio_event(audio_chunk=chunk)
+    await stream.input_stream.end_stream()
 
 
 async def basic_transcribe():
@@ -198,11 +216,18 @@ async def basic_transcribe():
         media_sample_rate_hz=16000,
         media_encoding="pcm",
     )
-
+    global TRANSCRIBE_STREAM
+    TRANSCRIBE_STREAM = stream
     # Instantiate our handler and start processing events
     handler = MyEventHandler(stream.output_stream)
     # await asyncio.gather(new_line(), reply_async())
-    await asyncio.gather(write_chunks(stream), handler.handle_events(), new_line(), reply_async())
+    N = 5
+    while N > 0:
+        try:
+            await asyncio.gather(write_chunks(stream), handler.handle_events(), new_line(), reply_async())
+        except BadRequestException:
+            await asyncio.sleep(0.1)
+
 
 
 async def text_assisting(context, model="bloom"):
