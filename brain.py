@@ -2,6 +2,7 @@ import asyncio
 import sys
 import time
 
+import colorama
 import requests
 import json
 import sounddevice
@@ -23,13 +24,21 @@ import subprocess
 
 # Create a client using the credentials and region defined in the [adminuser]
 # section of the AWS credentials file (~/.aws/credentials).
+colorama.init()
 session = Session(profile_name="default")
 polly = session.client("polly")
 VOICES = ["Nicole", "Russell", "Amy", "Emma", "Brian", "Aditi", "Raveena", "Ivy",
           "Joanna", "Kendra", "Kimberly", "Salli", "Joey", "Justin", "Matthew", "Geraint"]
+COLOR_CHOICE = [1, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0]
+AGENTS_COLOR = {f"{name}": COLOR_CHOICE[ix] for ix, name in enumerate(VOICES)}
+
+AGENT1_COLOR = '\033[96m'  # cyan
+AGENT2_COLOR = '\033[95m'  # magenta
+END_COLOR = '\033[0m'
 
 LAST_HEARD = ""
 LAST_SAID = ""
+AGENT = ""
 NUMBER_OF_LINES = 100
 CHUNK_TIME_SIZE = 8
 HEARING_STREAM = None
@@ -38,16 +47,17 @@ SPEAKING = False
 
 
 async def read_outloud(text: str):
-    global HEARING_STREAM
+    global HEARING_STREAM, AGENT
     # print("closing stream")
     HEARING_STREAM.close()
 
+    start_color = AGENT1_COLOR if AGENTS_COLOR[AGENT] == 0 else AGENT2_COLOR
+
     try:
         # Request speech synthesis
-        voiceid = random.choice(VOICES)
-        print("------------- said by: ", voiceid, end="")
+        print(f"------------- said by: {start_color + AGENT + END_COLOR}", end="")
         # BRIAN
-        response = polly.synthesize_speech(Text=text, OutputFormat="mp3", VoiceId=voiceid)
+        response = polly.synthesize_speech(Text=text, OutputFormat="mp3", VoiceId=AGENT)
     except (BotoCoreError, ClientError) as error:
         # The service returned an error, exit gracefully
         print(error)
@@ -119,24 +129,26 @@ async def new_line():  # new_line and speak_flag that is checked in speak_out_lo
 
 async def reply_async():
     for _ in range(NUMBER_OF_LINES):
-        global SPEAKING, LAST_SAID
+        global SPEAKING, LAST_SAID, AGENT
         await asyncio.sleep(CHUNK_TIME_SIZE)
         SPEAKING = True
         print(f"[processing]... {LAST_HEARD}")
 
         if LAST_HEARD:
             try:
+                AGENT = await random.choice(VOICES)
+                start_color = AGENT1_COLOR if AGENTS_COLOR[AGENT] == 0 else AGENT2_COLOR
                 speak = asyncio.create_task(text_assisting(LAST_HEARD))  # this writes in LAST_SAID
                 await speak
                 if 'error' not in LAST_SAID[0].keys():
-                    print(f"[speaking]... {LAST_SAID[0]['generated_text']}")
+                    print(f"[speaking]... {start_color + LAST_SAID[0]['generated_text'] + END_COLOR}")
 
                 LAST_SAID = LAST_SAID[0]['generated_text']
             except KeyError:  # repeats the query in case model was not ready
                 speak = asyncio.create_task(text_assisting(LAST_HEARD, model="gpt2"))  # this writes in LAST_SAID
                 await speak
                 if 'error' not in LAST_SAID[0].keys():
-                    print(f"[speaking]... {LAST_SAID[0]['generated_text']}")
+                    print(f"[speaking]... {start_color + LAST_SAID[0]['generated_text'] + END_COLOR}")
                 LAST_SAID = LAST_SAID[0]['generated_text']
             finally:
                 await read_outloud(LAST_SAID)
@@ -145,26 +157,39 @@ async def reply_async():
                 LAST_SAID = ""
 
 
+async def new_agent(li):
+    global AGENT
+    AGENT = random.choice(li)
+
+
 async def reply_async_single():
-    global SPEAKING, LAST_SAID
+    global SPEAKING, LAST_SAID, AGENT
     await asyncio.sleep(CHUNK_TIME_SIZE)
     SPEAKING = True
     print(f"[processing]... {LAST_HEARD}")
 
     if LAST_HEARD:
         try:
-            speak = asyncio.create_task(text_assisting(LAST_HEARD))  # this writes in LAST_SAID
+            await new_agent(VOICES)
+            # print("agent: ", AGENT)
+            print("[bloom]...")
+            start_color = AGENT1_COLOR if AGENTS_COLOR[AGENT] == 0 else AGENT2_COLOR
+            speak = asyncio.create_task(text_assisting(LAST_HEARD, model="bloom"))  # this writes in LAST_SAID
             await speak
+            # print("spoken...")
             if 'error' not in LAST_SAID[0].keys():
                 LAST_SAID = LAST_SAID[0]['generated_text']
-                print(f"[speaking]... {LAST_SAID}")
+                print(f"[speaking]... {start_color + LAST_SAID + END_COLOR}")
+            # else:
+            #     print("error...")
 
         except KeyError:
+            print("[gpt2]...")
             speak = asyncio.create_task(text_assisting(LAST_HEARD, model="gpt2"))  # this writes in LAST_SAID
             await speak
             if 'error' not in LAST_SAID[0].keys():
                 LAST_SAID = LAST_SAID[0]['generated_text']
-                print(f"[speaking]... {LAST_SAID}")
+                print(f"[speaking]... {start_color + LAST_SAID + END_COLOR}")
 
         finally:
             await read_outloud(LAST_SAID)
@@ -264,7 +289,8 @@ async def start_client():
     global CLIENT_STREAM
     client = TranscribeStreamingClient(region="us-west-2")
     # Start transcription to generate our async stream
-    CLIENT_STREAM = await client.start_stream_transcription(language_code="en-US", media_sample_rate_hz=16000, media_encoding="pcm")
+    CLIENT_STREAM = await client.start_stream_transcription(language_code="en-US", media_sample_rate_hz=16000,
+                                                            media_encoding="pcm")
 
 
 async def cancel_all_tasks(tasks_list=[]):
